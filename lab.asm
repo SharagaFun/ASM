@@ -1,3 +1,10 @@
+;Ввести текст из файла, имя которого задано в командной строке.
+;Весь текст преобразуется следующим образом - каждое новое слово выводится
+;в следующую колонку за счет добавления необходимого числа пробелов, ширина
+;колонок одинаковая и определяется по самому длинному слову в тексте. Вывести
+;полученный текст в другой файл и на экран. Если имя второго файла не задано в
+;командной строке, то запрашивается у пользователя.
+
 CSEG segment 
 assume cs: CSEG
 assume ds: CSEG
@@ -15,12 +22,32 @@ start:
 	
 	cmp al, 20h	
 	je begin
-	
 	cmp al, 1Bh 
   jne start
   int 20h
+  begin:
+	push SI		
+	mov SI, 128
+	lodsb
+	cmp AL, 0
+	jnz pass
+	mov AH, 09h
+	mov DX, offset no_f
+	int 21h
+	int 20h		
+	pass:
+	add SI, 1
+	mov f_adr, SI
+	lp:
+	lodsb
+	cmp AL, 0Dh
+	jnz lp
+	dec SI
+	xor AL,AL
+	mov DS:[SI], byte ptr AL
+	inc SI
+	pop SI
 	
-begin:
 
 	mov dx, offset msg_write_name
 	call print
@@ -28,7 +55,7 @@ begin:
 	mov ah, 0Ah 
 	mov dx, offset filename
 	int 21h
-	
+	mov dx, f_adr
 	call read_filename
 
 	jc error1
@@ -41,6 +68,19 @@ begin:
 	mov dx, offset buffer
 	int 21h
 	jc error2
+	
+	push ax
+	xor bh, bh
+	mov bl, filename[1]
+	mov filename[bx+2], 0
+	mov ax, 3D00h
+	mov dx, offset filename+2
+	mov ah,3Ch   
+	xor cx,cx               
+	int 21h                 	    
+	mov handle, AX	
+	pop ax
+
 	
 	jmp a
 	
@@ -55,7 +95,7 @@ error1:
 	push ax
 	push dx
 	
-	jmp begin
+	int 20h
 	
 error2:
 
@@ -67,14 +107,14 @@ error2:
 	
 	pop dx
 	pop ax
-	jmp begin	
+	int 20h
 	
 a: 
 	
 	cmp ax,0
-	jne bps
+	jne on
 	int 20h
-	bps:
+	on:
 	mov cx, ax
 	
 	mov si, offset buffer
@@ -82,78 +122,65 @@ a:
 	
 	push cx
 	push si
-	
 cycle1:
 	dec cx
 	lodsb
 	call find_max_len
 	cmp cx,0
 	jne cycle1
+	mov len, 0
 ;	dec max_len
-;continue:
-	pop cx 
+	inc max_len
 	pop si
+continue:
+	pop cx 
+	mov wordstarts, si
 cycle2:
-	dec cx
-	lodsb
 	call print_len
-		
 		push bx
 		push cx
-		
-		mov bx, reg_of_spase
-		cmp bx,1
-		jne off2
-	;	mov reg_of_spase, 0
 		mov cx, max_len
-		
-		sub cx, len ;---------------
-		
-		mov bx, si
-		mov wordstarts, bx
-		sub bx, len
-		mov wordend, bx
-	;	add cx, 2
-	
+		mov ax, toline
+		add ax, cx
+		sub cx, prevword
+		mov bx, len
+		mov prevword, bx
+		mov toline, ax
+		cmp ax, 80
+		jl cycle_in_cycle
+		mov dx, 0Ah
+		call print_s
+		mov dx, 0Dh
+		call print_s
+		mov toline, 0
 	cycle_in_cycle:
 		cmp cx,0	
 		je bypass
-		mov ah, 02h
-		mov dx, '1'
-		int 21h
+		mov ax, toline
+		cmp ax, 0
+		je bypass
+		mov dx, ' '
+		call print_s
+		;inc toline
 		dec cx
 		jmp cycle_in_cycle
-		;push si
-		
-		
 		bypass:
-		mov cx, len 
 		mov si, wordstarts
+		mov cx, len
 		c:
-		lodsb
-		mov ah, 02h
-		mov dl, al
-		mov dh, 0
-		;int 21h
-		dec cx
-		cmp cx,0
-		jne c
-		
-		
-		
-		pop si
-		
-		mov ah, 02h
-		mov dx, 0Ah
-		int 21h
-		
-		mov ah, 02h
-		mov dx, 0Dh
-		int 21h
-		
-	
+			cmp cx,0
+			je nec
+			lodsb
+			mov dl, al
+			mov dh, 0
+			;inc toline
+			call print_s
+			dec cx
+			jmp c
+		nec:
+		inc si
+		mov wordstarts, si
 		mov len, 0
-	;	mov bx, 0
 		mov reg_of_spase, 0
 	off2:
 		pop cx
@@ -169,15 +196,12 @@ cycle2:
 off:
 	int 20h
 
-;----------Пoдпрограммы----------
+;----------Процедуры----------
 
 read_filename proc
 
 	xor bh, bh
-	mov bl, filename[1]
-	mov filename[bx+2], 0
 	mov ax, 3D00h
-	mov dx, offset filename+2
 	int 21h
 	
 	ret
@@ -204,11 +228,12 @@ find_max_len proc
 	
 		cmp al, 20h
 		je zero_len
-		cmp al, 10h
-		je zero_len
 		cmp al, 13h
 		je zero_len
-		
+		cmp al, 0Ah
+		je zero_len
+		cmp al, 0Dh
+		je offproc 
 		inc len
 		jmp offproc 
 	
@@ -235,26 +260,32 @@ find_max_len endp
 
 print_len proc
 	
-		push cx
-		
+		;push cx
+		push bx
+		mov bx, 0
+		cccycle:
+		dec cx
+		lodsb
 		cmp al, 20h
-		je zero_len1
-		cmp al, 10h
 		je zero_len1
 		cmp al, 13h
 		je zero_len1
-		mov cx, len
-		inc cx
-		mov len, cx
+		cmp al, 0Ah
+		je zero_len1
+		cmp al, 0
+		je zero_len1
+		cmp al, 0Dh
+		je nolen
 		
-		
-		jmp offproc1
+		;mov cx, len
+		inc bx
+		;
+		nolen:
+		jmp cccycle
 	
 	zero_len1:
-		inc reg_of_spase
-	offproc1:
-		mov cx, len
-		pop cx
+		mov len, bx
+		pop bx
 		ret
 print_len endp
 
@@ -264,35 +295,48 @@ press_button proc
 	ret
 press_button endp	
 
+		
+print_s proc
+	mov ah, 02h
+	int 21h
+	push CX
+	push DX
+	push AX
+	push BX
+	mov to_print, DL
+	mov BX,handle               
+	mov AH,40h ;write file             
+	mov DX,offset to_print         
+	mov CX,1
+	int 21h
+	pop BX
+	pop AX
+	pop	DX
+	pop CX
+	ret
+print_s endp 
+
 ;----------Данные----------
 	filename db 40 dup (' ')
 	buffer dw 2048 dup(' ')
-	buf dw 80(' ')
+	f_adr dw 00
+	f_adr1 dw 0
 	handle dw 0
+	toline dw 80
+	prevword dw 0
 	reg dw 0
 	max_len dw 0
 	len dw 0
+	reg_of_spase dw 0
+	to_print db 'A'
 	wordstarts dw 0
-	wordend dw 0
-	reg_of_spase dw 0
 	
-;----------Сообщения---------	
+	
 	msg_error_file db ' Error: file is not found!', 0Ah, 0Dh, '$'
 	msg_error_buffer db ' Error: can not read file', 0Ah, 0Dh, '$'
 	msg_press_ESC db 'Press ESC for exit', 0Ah, 0Dh, '$'
 	msg_press_Space db 'Press Space for continue', 0Ah, 0Dh, '$'
-	msg_write_name db 'Write a filename', 0Ah, 0Dh, '$'
-	msg_OK db 'OK', 0Ah, 0Dh, '$'
-	
-CSEG ends
-end start
-	reg_of_spase dw 0
-	
-;----------Сообщения---------	
-	msg_error_file db ' Error: file is not found!', 0Ah, 0Dh, '$'
-	msg_error_buffer db ' Error: can not read file', 0Ah, 0Dh, '$'
-	msg_press_ESC db 'Press ESC for exit', 0Ah, 0Dh, '$'
-	msg_press_Space db 'Press Space for continue', 0Ah, 0Dh, '$'
+	no_f db 'Usage: lab filename [filename]',0Ah, 0Dh,'$'
 	msg_write_name db 'Write a filename', 0Ah, 0Dh, '$'
 	msg_OK db 'OK', 0Ah, 0Dh, '$'
 	
