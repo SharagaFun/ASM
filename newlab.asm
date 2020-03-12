@@ -126,7 +126,7 @@ screenssexit proc
 	
 screenssexit endp
 
-new_1Ch proc ;  ,   18   
+new_1Ch proc
 	
 	call screensstep
 	
